@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, TypedDict, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, TypedDict, Optional, TYPE_CHECKING, Tuple # <--- AÑADIR Tuple
 from langchain_core.prompts import ChatPromptTemplate
 #from langchain_core.pydantic_v1 import BaseModel, Field as PydanticField # Ya no se necesita aquí
 from langgraph.graph import StateGraph, END
@@ -8,9 +8,10 @@ from src.utils import data_loader
 from src.utils.config import get_llm
 from .search_handler import search_products_node
 from .wishlist_agent import run_wishlist_agent
-from .planner_models import PurchaseAdvice, SHOPPING_ADVICE_PROMPT_TEMPLATE # Importar modelos y prompt
+from .planner_models import PurchaseAdvice, SHOPPING_ADVICE_PROMPT_TEMPLATE
+from .master_agent import run_conversational_master_agent, MasterAgentDecision # Importar MasterAgent
 
-if TYPE_CHECKING: # Evitar importación circular, aunque planner_models no importa graph
+if TYPE_CHECKING:
     pass
 
 # --- Definición del Estado del Agente ---
@@ -38,6 +39,11 @@ class AgentState(TypedDict):
     wishlist_agent_error: Optional[str] # Para capturar errores del WishlistAgent
 
     raw_cart_items: Optional[List[Dict[str, Any]]] # Items de carritos procesados antes del matching
+
+    # Para el MasterAgent Conversacional
+    conversation_history: Optional[List[Tuple[str, str]]]
+    current_user_input: Optional[str]
+    master_agent_decision: Optional[Dict[str, Any]] # Salida del MasterAgent (ej: qué hacer después)
     # ... más campos según sea necesario
 
 # --- Nodos del Grafo ---
@@ -421,79 +427,166 @@ def generate_shopping_plan(state: AgentState) -> AgentState:
 
 # SHOPPING_ADVICE_PROMPT_TEMPLATE y PurchaseAdvice ahora se importan de .planner_models
 
-# --- Construcción del Grafo ---
-def create_graph():
-    """Crea y configura el grafo del agente."""
+# --- Construcción del Grafo Conversacional (Esqueleto) ---
+def create_conversational_graph():
+    """
+    Crea y configura el grafo del agente conversacional principal (esqueleto).
+    Este grafo gestionará la interacción con el usuario y, en el futuro,
+    delegará tareas a agentes/herramientas especializados.
+    """
     workflow = StateGraph(AgentState)
 
-    # Añadir nodos
+    # --- Nodos para el ciclo conversacional ---
+    def get_user_input_node(state: AgentState) -> AgentState:
+        # Este nodo es un placeholder. En una app real con UI, aquí se manejaría la espera de input.
+        # En nuestra simulación con `main.py`, `current_user_input` se poblará externamente
+        # antes de cada invocación del grafo en el bucle de `main.py`.
+        print("--- (Grafo) Esperando/Verificando Input del Usuario ---")
+        if state.get("current_user_input"):
+            print(f"Input recibido en el grafo: {state['current_user_input']}")
+        else:
+            print("No hay nuevo input de usuario en el estado actual del grafo.")
+        return state
+
+    def master_agent_node(state: AgentState) -> AgentState:
+        print("--- (Grafo) Master Agent Procesando ---")
+        user_input = state.get("current_user_input", "")
+        history = state.get("conversation_history", [])
+
+        # Llamar a la lógica del MasterAgent (esqueleto por ahora)
+        decision_obj = run_conversational_master_agent(user_input, history)
+
+        # Actualizar historial y decisión en el estado
+        # Solo añadir a historial si hubo input real y respuesta.
+        # No añadir el prompt inicial de "bienvenida" del MasterAgent si no hay input de usuario,
+        # ya que el historial debe reflejar un diálogo.
+        new_history = history
+        if user_input: # Solo si hubo un input real del usuario para este turno
+            new_history = history + [("user", user_input)]
+            if decision_obj.response_text:
+                 new_history = new_history + [("ai", decision_obj.response_text)]
+
+        state['master_agent_decision'] = decision_obj.model_dump()
+        state['conversation_history'] = new_history
+        # state['current_user_input'] = None # Se limpia en main.py antes de la siguiente iteración del bucle
+        return state
+
+    def respond_to_user_node(state: AgentState) -> AgentState:
+        # Este nodo es principalmente para la claridad del flujo.
+        # La respuesta real al usuario se gestionará en `main.py` basado en `master_agent_decision`.
+        decision = state.get('master_agent_decision')
+        if decision and decision.get('response_text'):
+            print(f"--- (Grafo) Respuesta para el usuario preparada: {decision['response_text'][:100]}...")
+        return state
+
+    # Añadir nodos al workflow
+    workflow.add_node("get_input", get_user_input_node)
+    workflow.add_node("master_agent", master_agent_node)
+    workflow.add_node("respond_to_user", respond_to_user_node)
+
+    # Definir el flujo del esqueleto conversacional
+    workflow.set_entry_point("get_input")
+    workflow.add_edge("get_input", "master_agent")
+    workflow.add_edge("master_agent", "respond_to_user")
+
+    # Lógica condicional para continuar o terminar la conversación
+    def should_continue_conversation(state: AgentState) -> str:
+        decision = state.get('master_agent_decision')
+        if decision and decision.get('next_action') == "end_conversation":
+            print("--- (Grafo) Decisión: Terminar Conversación ---")
+            return "end_it" # Usar un nombre de arista diferente a END para claridad
+        # En el futuro: "call_tool_X", "ask_clarification"
+        print("--- (Grafo) Decisión: Continuar Conversación ---")
+        return "continue_it"
+
+    workflow.add_conditional_edges(
+        "respond_to_user",
+        should_continue_conversation,
+        {
+            "end_it": END,
+            "continue_it": "get_input", # Vuelve al inicio del ciclo para esperar nuevo input
+        }
+    )
+
+    # Los nodos de carga de datos y el flujo de pipeline anterior (load_marketplace, run_wishlist_agent, etc.)
+    # no se conectan en este grafo principal por ahora. Serán herramientas.
+    # El nodo initial_data_processing() ya no se usa/define.
+
+    return workflow.compile()
+
+
+# Mantener la función create_graph original por si se necesita temporalmente o para referencia,
+# pero la renombraremos para evitar confusión.
+def create_pipeline_graph():
+    """Crea y configura el grafo del pipeline de procesamiento de datos original."""
+    workflow = StateGraph(AgentState)
+
+    # Nodos del pipeline original
     workflow.add_node("load_marketplace", load_marketplace_data)
     workflow.add_node("load_instagram", load_instagram_data)
     workflow.add_node("load_pinterest", load_pinterest_data)
-    workflow.add_node("load_carts", load_abandoned_carts_data) # Carga los datos crudos de carritos
-
-    workflow.add_node("wishlist_analyzer_node", run_wishlist_agent) # Nuevo: Analiza Instagram y Pinterest con IA
-    workflow.add_node("extract_cart_data_node", extract_cart_data) # Nuevo: Procesa carritos para matching directo
-
-    workflow.add_node("product_matching", product_matching_and_enrichment) # Modificado: Usa salida de IA y carritos procesados
+    workflow.add_node("load_carts", load_abandoned_carts_data)
+    workflow.add_node("wishlist_analyzer_node", run_wishlist_agent)
+    workflow.add_node("extract_cart_data_node", extract_cart_data)
+    workflow.add_node("product_matching", product_matching_and_enrichment)
     workflow.add_node("generate_plan", generate_shopping_plan)
-    workflow.add_node("search_products", search_products_node)
+    # workflow.add_node("search_products", search_products_node) # Eliminado ya que search_products_node fue removido
+    # El nodo initial_data_processing() ya no está.
 
-    # Definir el flujo
-    # 1. Cargar todos los datos
     workflow.set_entry_point("load_marketplace")
     workflow.add_edge("load_marketplace", "load_instagram")
     workflow.add_edge("load_instagram", "load_pinterest")
     workflow.add_edge("load_pinterest", "load_carts")
-
-    # 2. Después de cargar todo, procesar en paralelo (o secuencialmente si es más simple por ahora)
-    #    los items de redes sociales con IA y los items de carritos.
-    #    Para LangGraph, los flujos paralelos se manejan con múltiples aristas desde un nodo
-    #    o usando un nodo "router" condicional. Por simplicidad, haremos un flujo secuencial
-    #    donde el WishlistAgent opera sobre los datos de redes sociales, y extract_cart_data
-    #    opera sobre los datos de carritos. Ambos resultados alimentarán el nodo de matching.
-
-    workflow.add_edge("load_carts", "wishlist_analyzer_node") # WishlistAnalyzer usa datos de Insta/Pin
-    workflow.add_edge("wishlist_analyzer_node", "extract_cart_data_node") # Luego procesar carritos
-    workflow.add_edge("extract_cart_data_node", "product_matching") # Matching usa ambos resultados
-
-    # 3. Continuar con el flujo existente
+    workflow.add_edge("load_carts", "wishlist_analyzer_node")
+    workflow.add_edge("wishlist_analyzer_node", "extract_cart_data_node")
+    workflow.add_edge("extract_cart_data_node", "product_matching")
     workflow.add_edge("product_matching", "generate_plan")
-    workflow.add_edge("generate_plan", "search_products")
-    workflow.add_edge("search_products", END)
+    workflow.add_edge("generate_plan", END) # El pipeline ahora termina después de generar el plan
 
-    # Compilar el grafo
-    app = workflow.compile()
-    return app
+    return workflow.compile()
+
+# La función principal `create_graph` ahora se referirá al grafo conversacional
+create_graph = create_conversational_graph
+
 
 if __name__ == '__main__':
-    app = create_graph()
+    # Probar el grafo conversacional
+    app_conv = create_conversational_graph()
+    print("\n--- Probando Grafo Conversacional (Esqueleto) ---")
 
-    # Ejecutar el grafo con un estado inicial vacío o predefinido
-    initial_state = {
-        "identified_user_wishlist": [],
-        "user_profile": {"budget": 500, "preferred_categories": ["Electrónica"]} # Ejemplo
+    # Simular un par de turnos de conversación
+    turn1_state = {
+        "conversation_history": [],
+        "current_user_input": "Hola agente",
+        # ... otros campos del estado inicializados a None o [] según AgentState
+        "marketplace_products": None, "instagram_saves": None, "pinterest_boards": None,
+        "abandoned_carts": None, "identified_user_wishlist": [], "user_profile": {},
+        "enriched_wishlist": [], "shopping_plan": {}, "search_criteria": None,
+        "search_results": [], "ia_categorized_wishlist": [], "wishlist_agent_error": None,
+        "raw_cart_items": [], "master_agent_decision": None
     }
 
-    # Imprimir la imagen del grafo para visualización (requiere graphviz)
+    print("\nTurno 1:")
+    s = app_conv.invoke(turn1_state)
+    print(f"Estado después del turno 1: master_agent_decision='{s.get('master_agent_decision', {}).get('response_text')}', history_len={len(s.get('conversation_history',[]))}")
+
+    turn2_state = s.copy() # Usar el estado resultante para el siguiente turno
+    turn2_state["current_user_input"] = "Quiero buscar algo"
+
+    print("\nTurno 2:")
+    s = app_conv.invoke(turn2_state)
+    print(f"Estado después del turno 2: master_agent_decision='{s.get('master_agent_decision', {}).get('response_text')}', history_len={len(s.get('conversation_history',[]))}")
+
+    turn3_state_exit = s.copy()
+    turn3_state_exit["current_user_input"] = "adiós"
+    print("\nTurno 3 (Exit):")
+    s = app_conv.invoke(turn3_state_exit)
+    print(f"Estado después del turno 3: master_agent_decision='{s.get('master_agent_decision', {}).get('response_text')}', history_len={len(s.get('conversation_history',[]))}")
+    print(f"Final node (should be END): {s is None or s.get('master_agent_decision',{}).get('next_action') == 'end_conversation'}") # La invocación final a END devuelve None o el último estado.
+
+    # Visualización del grafo conversacional
     try:
-        # Guardar la imagen del grafo
-        app.get_graph().draw_mermaid_png(output_file_path="graph_visualization.png")
-        print("\nVisualización del grafo guardada como graph_visualization.png (si graphviz está instalado)")
+        app_conv.get_graph().draw_mermaid_png(output_file_path="graph_conversational_skeleton.png")
+        print("\nVisualización del grafo conversacional guardada como graph_conversational_skeleton.png")
     except Exception as e:
-        print(f"\nNo se pudo generar la visualización del grafo (requiere graphviz): {e}")
-
-    print("\n---EJECUTANDO GRAFO---")
-    final_state = app.invoke(initial_state)
-
-    print("\n---ESTADO FINAL DEL AGENTE---")
-    # Imprimir selectivamente para no saturar la consola si los datos son grandes
-    print(f"Productos del Marketplace: {len(final_state.get('marketplace_products', []))} items")
-    print(f"Saves de Instagram: {len(final_state.get('instagram_saves', {}).get('saved_items', []))} items")
-    print(f"Tableros de Pinterest: {len(final_state.get('pinterest_boards', {}).get('boards', []))} tableros")
-    print(f"Carritos Abandonados: {len(final_state.get('abandoned_carts', []))} carritos")
-    print(f"Wishlist Identificada: {len(final_state.get('identified_user_wishlist', []))} items")
-    # print("\nWishlist detallada:")
-    # for item in final_state.get('identified_user_wishlist', []):
-    #     print(f"  - {item.get('name') or item.get('product_id')} (Fuente: {item.get('source')})")
-    print(f"Perfil de Usuario: {final_state.get('user_profile')}")
+        print(f"\nNo se pudo generar la visualización del grafo conversacional: {e}")

@@ -24,120 +24,87 @@ def run_agent_demo():
         "search_results": [],
         "ia_categorized_wishlist": None,
         "wishlist_agent_error": None,
-        "raw_cart_items": None         # Inicializar para items de carrito procesados
+        "raw_cart_items": None,
+
+        # Para el MasterAgent Conversacional
+        "conversation_history": [],
+        "current_user_input": None,
+        "master_agent_decision": None
     }
 
-    print("\n--- 📊 Ejecutando Flujo del Agente (Plan de Compra Inicial) 📊 ---")
-    # Invocar el grafo con el estado inicial
-    # La configuración de 'recursion_limit' puede ser necesaria para grafos más complejos o largos.
-    # Ejecutamos una primera vez para el plan de compra
-    current_state = app.invoke(initial_state, config={"recursion_limit": 15})
+    # Ahora `create_graph` se refiere a `create_conversational_graph`
+    # El flujo de pipeline anterior (incluyendo la doble invocación) ya no se usa aquí.
+    # Se implementará un bucle de conversación simple.
 
-    print("\n--- ✅ Flujo del Plan de Compra Completado ✅ ---")
-    print("\n--- 📝 Resumen Intermedio del Estado del Agente (Post-Plan) 📝 ---")
-    # Mostrar un breve resumen aquí puede ser útil para depurar o entender el estado antes de la búsqueda
-    if current_state.get('shopping_plan'):
-        plan = current_state['shopping_plan']
-        print(f"🛍️ Plan de Compra: {len(plan.get('items_to_buy', []))} items para comprar. Costo: {plan.get('estimated_total_cost')} {plan.get('currency', '')}")
+    print("🚀 Iniciando Agente de Compras Conversacional (Esqueleto) 🚀")
+    print("Escribe 'adiós' o 'salir' para terminar.")
 
-    # --- Simulación de Búsqueda de Productos ---
-    print("\n--- 🔍 Iniciando Simulación de Búsqueda de Productos 🔍 ---")
-    # Establecer criterios de búsqueda en el estado actual
-    # Ejemplo 1: Buscar cafeteras baratas
-    current_state['search_criteria'] = {"query": "cafetera", "max_price": 350.00, "in_stock": True}
+    # Crear el grafo conversacional
+    # La función create_graph() en graph.py ahora devuelve el grafo conversacional.
+    app = create_graph()
 
-    # Volver a invocar el grafo. Como el grafo ahora fluye hacia la búsqueda DESPUÉS del plan,
-    # y el estado se mantiene, debería ejecutar el nodo de búsqueda.
-    # NOTA: LangGraph generalmente reinicia desde el punto de entrada si no se manejan los puntos de continuación
-    # de forma más explícita para flujos más complejos o interactivos.
-    # Para este ejemplo secuencial extendido, la invocación completa funcionará,
-    # aunque una implementación más robusta usaría `stream` o gestionaría puntos de continuación.
-    # Dado que nuestro flujo es lineal (plan -> search -> END), una nueva invocación
-    # con el estado actualizado que incluye 'search_criteria' debería funcionar,
-    # pero es importante notar que RECORRERÁ TODO EL GRAFO DE NUEVO.
-    # Una mejor aproximación para un agente interactivo sería tener un grafo que pueda
-    # saltar a nodos específicos o un bucle de control externo.
-    # Por simplicidad, aquí re-invocamos. Los nodos anteriores simplemente re-procesarán.
+    # Estado inicial para la conversación
+    current_state: AgentState = {
+        "marketplace_products": None, # Se cargarán por herramientas si es necesario
+        "instagram_saves": None,
+        "pinterest_boards": None,
+        "abandoned_carts": None,
+        "identified_user_wishlist": [], # Legacy, podría eliminarse o usarse por herramientas
+        "user_profile": {"budget": 1000, "preferred_categories": ["Electrónica", "Hogar"]},
+        "enriched_wishlist": [],
+        "shopping_plan": {},
+        "search_criteria": None,
+        "search_results": [],
+        "ia_categorized_wishlist": None,
+        "wishlist_agent_error": None,
+        "raw_cart_items": None,
+        "conversation_history": [],
+        "current_user_input": None,
+        "master_agent_decision": None
+    }
 
-    # Para evitar que los nodos anteriores se ejecuten de nuevo innecesariamente si ya tienen datos,
-    # podríamos hacerlos más idempotentes o usar un punto de entrada diferente para la búsqueda.
-    # Por ahora, dejaremos que se re-ejecuten, ya que no tienen efectos secundarios dañinos aquí.
-    # Una alternativa sería diseñar el grafo con puntos de entrada condicionales o usar `app.stream()`
-    # para un control más fino sobre qué nodos ejecutar.
+    # Cargar datos una vez al inicio para que estén disponibles para las herramientas (simulación)
+    # En un sistema más avanzado, las herramientas cargarían datos bajo demanda o el MasterAgent lo orquestaría.
+    print("Cargando datos iniciales para el entorno del agente...")
+    current_state['marketplace_products'] = data_loader.get_marketplace_products()
+    current_state['instagram_saves'] = data_loader.get_instagram_saves()
+    current_state['pinterest_boards'] = data_loader.get_pinterest_boards()
+    current_state['abandoned_carts'] = data_loader.get_abandoned_carts()
+    print("Datos iniciales cargados.")
 
-    print(f"\n--- 📊 Ejecutando Flujo del Agente (con Criterios de Búsqueda: {current_state['search_criteria']}) 📊 ---")
-    # La segunda invocación procesará todo el grafo de nuevo, pero esta vez `search_criteria`
-    # tendrá un valor, lo que permitirá que el nodo `search_products_node` realice la búsqueda.
-    final_state = app.invoke(current_state, config={"recursion_limit": 15}) # Usar current_state
+    while True:
+        try:
+            user_input = input("👤 Tú: ")
+            current_state["current_user_input"] = user_input
 
-    print("\n--- ✅ Flujo de Búsqueda Completado ✅ ---")
-    print("\n--- 📝 Resumen del Estado Final del Agente (Post-Búsqueda) 📝 ---")
+            # Invocar el grafo con el input del usuario
+            # El recursion_limit puede necesitar ajuste para conversaciones más largas o complejas.
+            updated_state = app.invoke(current_state, config={"recursion_limit": 20})
+            current_state = updated_state # Actualizar el estado para el siguiente turno
 
-    # Mostrar resumen de datos cargados (opcional, puede ser verboso)
-    # ... (código de impresión de marketplace_products, instagram_saves, etc. puede ir aquí si se desea) ...
+            master_decision = current_state.get("master_agent_decision", {})
 
-    if final_state.get('wishlist_agent_error'):
-        print(f"⚠️ Error en WishlistAgent: {final_state['wishlist_agent_error']}")
+            # La respuesta al usuario ya se imprime dentro del nodo respond_to_user_node (simulado)
+            # o aquí podríamos tomar master_decision.response_text para mostrarlo.
+            # Por ahora, el nodo `respond_to_user_node` ya lo imprime.
 
-    if final_state.get('ia_categorized_wishlist'):
-        print(f"\n🎨 Wishlist Analizada por IA: {len(final_state['ia_categorized_wishlist'])} items")
-        for i, item in enumerate(final_state['ia_categorized_wishlist'][:3]): # Mostrar primeros 3 para brevedad
-            print(f"  Item IA {i+1}:")
-            print(f"    Texto Original: {item.get('original_text', '')[:50]}...")
-            print(f"    Producto IA: {item.get('identified_product_name', 'N/A')}")
-            print(f"    Categoría IA: {item.get('category', 'N/A')}")
-            print(f"    Sentimiento IA: {item.get('user_sentiment_or_intent', 'N/A')}")
-            print(f"    Fuente: {item.get('source', 'N/A')}")
-    else:
-        print("\n🎨 Wishlist Analizada por IA: No disponible o vacía.")
+            if master_decision.get("next_action") == "end_conversation":
+                # El mensaje de despedida ya lo imprime el respond_to_user_node
+                break
 
-    if final_state.get('user_profile'):
-        print(f"\n👤 Perfil de Usuario: {final_state['user_profile']}")
-    else:
-        print("👤 Perfil de Usuario: No disponible.")
+        except KeyboardInterrupt:
+            print("\n👋 Saliendo del agente conversacional.")
+            break
+        except Exception as e:
+            print(f"\n💥 Ocurrió un error inesperado: {e}")
+            print("Reiniciando ciclo de conversación o terminando...")
+            # Podríamos optar por resetear parte del estado o simplemente terminar.
+            # Por ahora, terminaremos si hay un error no manejado.
+            break
 
-    if final_state.get('shopping_plan'):
-        plan = final_state['shopping_plan']
-        print("\n--- 🛍️ Plan de Compra Generado 🛍️ ---")
-        print(f"💰 Presupuesto: {plan.get('budget')} {plan.get('currency', '')}")
-        print(f"💳 Costo Estimado Total: {plan.get('estimated_total_cost')} {plan.get('currency', '')}")
-
-        print("\n🛒 Items para Comprar:")
-        if plan.get('items_to_buy'):
-            for item in plan['items_to_buy']:
-                item_name_display = item.get('identified_product_name', item.get('name', 'Desconocido'))
-                price_display = f"{item.get('price')} {item.get('currency')}" if item.get('price') else "Precio N/A"
-                print(f"  - {item_name_display} ({price_display}) - Fuente: {item.get('source')}")
-                if item.get('purchase_advice'):
-                    print(f"    ✨ Consejo IA: {item['purchase_advice']}")
-        else:
-            print("  No hay items para comprar dentro del presupuesto o disponibles.")
-
-        print("\n🤔 Recomendaciones Adicionales/Para Después:")
-        if plan.get('recommendations_for_later'):
-            for rec in plan['recommendations_for_later']:
-                print(f"  - {rec.get('name')}: {rec.get('reason')} {rec.get('price', '')} {plan.get('currency', '') if rec.get('price') else ''}")
-        else:
-            print("  No hay recomendaciones adicionales.")
-    else:
-        print("\n--- 🛍️ Plan de Compra Generado 🛍️ ---")
-        print("  No se pudo generar el plan de compra.")
-
-    if final_state.get('search_criteria') or final_state.get('search_results'):
-        print("\n--- 🔎 Resultados de Búsqueda de Productos 🔎 ---")
-        print(f"Criterios Utilizados: {final_state.get('search_criteria')}")
-        results = final_state.get('search_results', [])
-        if results:
-            print(f"Se encontraron {len(results)} productos:")
-            for prod in results:
-                print(f"  - {prod.get('name')} (Precio: {prod.get('price')} {prod.get('currency')}, Stock: {prod.get('stock')}, Rating: {prod.get('ratings',{}).get('average_rating')})")
-        else:
-            print("No se encontraron productos que coincidan con los criterios.")
-    else:
-        print("\n--- 🔎 Resultados de Búsqueda de Productos 🔎 ---")
-        print("No se realizó ninguna búsqueda o no hubo resultados.")
-
-    print("\n✨ Demostración Finalizada ✨")
+    print("\n✨ Sesión de Agente Conversacional Finalizada ✨")
 
 if __name__ == "__main__":
+    # Importar data_loader aquí porque se usa en el nuevo run_agent_demo
+    from src.utils import data_loader
     run_agent_demo()

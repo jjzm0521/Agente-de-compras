@@ -60,7 +60,8 @@ def run_agent_demo():
         "raw_cart_items": None,
         "conversation_history": [],
         "current_user_input": None,
-        "master_agent_decision": None
+        "master_agent_decision": None,
+        "catalog_search_output": None # Inicializar resultado de búsqueda
     }
 
     # Cargar datos una vez al inicio para que estén disponibles para las herramientas (simulación)

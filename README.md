@@ -79,9 +79,16 @@ Este proyecto está evolucionando hacia una **arquitectura conversacional multi-
 1.  Un **`ConversationalMasterAgent`**: Actúa como el orquestador principal, interactuando con el usuario en lenguaje natural, interpretando sus intenciones y delegando tareas a agentes especializados.
 2.  **Agentes Especializados**: Módulos enfocados en tareas específicas (ej: analizar wishlists, buscar en catálogo, planificar compras, descubrir productos). Estos se están refactorizando para funcionar como "herramientas" que el `ConversationalMasterAgent` puede invocar.
 
-Actualmente, se ha implementado un **esqueleto del `ConversationalMasterAgent`**. Este esqueleto establece un bucle de chat básico en la línea de comandos (CLI) pero aún no utiliza LLMs para la toma de decisiones complejas ni invoca a los agentes especializados como herramientas de forma dinámica.
+Actualmente, se ha implementado un **esqueleto mejorado del `ConversationalMasterAgent`**. Este agente ahora:
+-   Establece un bucle de chat básico en la línea de comandos (CLI).
+-   Intenta usar un LLM (si la API Key de OpenAI está configurada) para detectar la intención del usuario (ej: saludo, buscar producto, despedida).
+-   Si la intención es "buscar producto" y se extrae una consulta:
+    -   Decide llamar a la herramienta `catalog_search_tool`.
+    -   El grafo ejecuta la herramienta.
+    -   En el siguiente turno, el `ConversationalMasterAgent` procesa los resultados de la búsqueda y los presenta al usuario.
+-   Si el LLM no está configurado, recurre a una lógica de fallback simple (eco de mensajes, manejo de "adiós", y una forma de _forzar_ la búsqueda con "busca [término]").
 
-El `CatalogSearchAgent` ha sido refactorizado como una herramienta (`catalog_search_tool`) lista para ser integrada.
+El `CatalogSearchAgent` ha sido refactorizado como una herramienta (`catalog_search_tool`) y está integrado en este flujo básico. Los otros agentes especializados (`WishlistAgent`, `ShoppingPlannerAgent`) aún no están integrados como herramientas en el flujo conversacional.
 
 ## Cómo Ejecutar
 
@@ -153,15 +160,28 @@ El script `src/main.py` ahora opera de la siguiente manera:
     *   Se cargan los datos simulados (catálogo, Instagram, Pinterest, carritos) en el estado inicial. Esto se hace para que las futuras herramientas tengan acceso a estos datos sin necesidad de cargarlos en cada turno de conversación.
 2.  **Bucle de Conversación (CLI)**:
     *   El programa entra en un bucle `while True`.
-    *   **Entrada del Usuario**: Se solicita al usuario que ingrese un mensaje a través del prompt `👤 Tú: `.
-    *   **Actualización del Estado**: La entrada del usuario se almacena en `current_state['current_user_input']`.
-    *   **Invocación del Grafo**: Se invoca el grafo conversacional con el `current_state`.
-        *   `get_input_node`: Verifica la entrada del usuario en el estado.
-        *   `master_agent_node`: Ejecuta el `run_conversational_master_agent` (esqueleto actual). Este procesa la entrada, actualiza el historial y decide la siguiente acción (ej: "respond_to_user" o "end_conversation").
-        *   `respond_to_user_node`: Prepara la respuesta (en el esqueleto, el `master_agent_node` ya formuló el texto de respuesta).
-        *   **Condicional `should_continue_conversation`**: Determina si el ciclo debe continuar o terminar.
-    *   **Salida al Usuario**: La respuesta del `master_agent_node` (almacenada en `master_agent_decision.response_text`) se imprime en la consola (actualmente esto ocurre dentro de los nodos del grafo con `print`, pero podría centralizarse en `main.py`).
-    *   **Terminación**: Si el `master_agent_node` decide `end_conversation` (ej: si el usuario escribe "adiós"), el bucle termina.
+    *   **Entrada del Usuario**: Se solicita al usuario que ingrese un mensaje.
+    *   **Actualización del Estado**: La entrada se almacena en `current_state['current_user_input']`.
+    *   **Invocación del Grafo**: Se invoca el grafo conversacional.
+        *   `get_input_node`: Recoge la entrada.
+        *   `master_agent_node`: Ejecuta `run_conversational_master_agent`.
+            *   **Si hay resultados de herramientas pendientes (ej: `catalog_search_output` del turno anterior)**: El `MasterAgent` los formatea en una respuesta para el usuario. `catalog_search_output` se limpia del estado.
+            *   **Si NO hay resultados de herramientas**:
+                *   El `MasterAgent` usa el LLM (si está configurado) para detectar la intención del `current_user_input`.
+                *   Si la intención es "buscar\_producto" y se extrae una consulta, el `MasterAgent` decide llamar a `catalog_search_tool`. Su respuesta inmediata al usuario será algo como "Ok, buscando...".
+                *   Para otras intenciones, formula una respuesta directa o decide terminar la conversación.
+            *   El `current_user_input` se limpia del estado.
+        *   **Enrutamiento Condicional (`route_after_master_agent`)**:
+            *   Si se decidió llamar a una herramienta, el flujo va a `execute_tool_node`.
+            *   Si no, va a `respond_to_user_node`.
+        *   `execute_tool_node` (si se llamó):
+            *   Ejecuta la herramienta especificada (ej: `catalog_search_tool`) con los argumentos proporcionados.
+            *   Almacena el resultado en `state['catalog_search_output']`.
+            *   El flujo vuelve al `master_agent_node` para procesar este resultado en el siguiente "sub-ciclo" del turno.
+        *   `respond_to_user_node`: Prepara/registra la respuesta final del turno.
+        *   **Condicional `should_loop_or_end`**: Si la acción es `end_conversation`, el grafo termina. Si no, vuelve a `get_input_node` para esperar la siguiente entrada del usuario.
+    *   **Salida al Usuario**: La respuesta del agente (formulada por `master_agent_node` y almacenada en `master_agent_decision.response_text`) se muestra en la consola (actualmente los `print` están distribuidos en los nodos, pero el mensaje final al usuario es el de `master_agent_decision.response_text`).
+    *   **Terminación**: Si el `master_agent_node` decide `end_conversation`, el bucle en `main.py` termina.
 
 **Nota sobre el Flujo Anterior (Pipeline):**
 La función `create_pipeline_graph()` en `src/agent/graph.py` contiene el grafo del pipeline anterior que procesaba los datos de forma lineal. Ya no es el flujo principal ejecutado por `main.py` pero se conserva como referencia o para posibles usos futuros.

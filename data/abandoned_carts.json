@@ -1,0 +1,33 @@
+[
+  {
+    "cart_id": "CART_001",
+    "user_id": "user_789",
+    "items": [
+      {
+        "product_id": "MP001",
+        "quantity": 1,
+        "added_at": "2023-12-07T10:00:00Z"
+      },
+      {
+        "product_id": "MP002",
+        "quantity": 1,
+        "added_at": "2023-12-07T10:05:00Z"
+      }
+    ],
+    "abandoned_at": "2023-12-07T11:30:00Z",
+    "subtotal": 949.49
+  },
+  {
+    "cart_id": "CART_002",
+    "user_id": null,
+    "items": [
+      {
+        "product_id": "MP003",
+        "quantity": 1,
+        "added_at": "2023-12-08T14:20:00Z"
+      }
+    ],
+    "abandoned_at": "2023-12-08T14:55:00Z",
+    "subtotal": 299.00
+  }
+]

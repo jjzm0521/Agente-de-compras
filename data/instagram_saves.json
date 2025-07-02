@@ -1,0 +1,32 @@
+{
+  "user_id": "instagram_user_123",
+  "saved_items": [
+    {
+      "post_id": "INSTA_POST_001",
+      "source_url": "https://instagram.com/p/INSTA_POST_001",
+      "image_url": "https://example.com/images/insta_save_01.jpg",
+      "caption": "¡Me encantan estos nuevos auriculares! #AudioMax #ProSound #GadgetGoals",
+      "detected_product_name": "Auriculares Inalámbricos ProSound",
+      "desired_price": 130.00,
+      "saved_at": "2023-12-01T10:30:00Z"
+    },
+    {
+      "post_id": "INSTA_POST_002",
+      "source_url": "https://instagram.com/p/INSTA_POST_002",
+      "image_url": "https://example.com/images/insta_save_02.jpg",
+      "caption": "Necesito esta cafetera en mi vida. El café de la mañana sería otro nivel. @HomeBeans",
+      "detected_product_name": "Cafetera Espresso Automática",
+      "desired_price": null,
+      "saved_at": "2023-12-05T15:00:00Z"
+    },
+    {
+      "post_id": "INSTA_POST_003",
+      "source_url": "https://instagram.com/p/INSTA_POST_003",
+      "image_url": "https://example.com/images/not_a_product.jpg",
+      "caption": "Hermoso atardecer en la playa. #travel #sunset",
+      "detected_product_name": null,
+      "desired_price": null,
+      "saved_at": "2023-12-06T18:20:00Z"
+    }
+  ]
+}

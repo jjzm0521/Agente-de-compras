@@ -1,0 +1,65 @@
+[
+  {
+    "id": "MP001",
+    "name": "Smartphone Avanzado XZ100",
+    "description": "El último smartphone con cámara de 108MP, pantalla AMOLED de 6.7 pulgadas y procesador Snapdragon 8 Gen 2.",
+    "price": 799.99,
+    "currency": "USD",
+    "category": "Electrónica",
+    "brand": "TechGlobal",
+    "stock": 150,
+    "image_url": "https://example.com/images/MP001.jpg",
+    "product_url": "https://example.com/products/MP001",
+    "tags": ["smartphone", "android", "tecnología", "móvil"],
+    "historical_prices": [
+      {"date": "2023-10-01", "price": 849.99},
+      {"date": "2023-11-15", "price": 799.99}
+    ],
+    "ratings": {
+      "average_rating": 4.8,
+      "review_count": 2500
+    }
+  },
+  {
+    "id": "MP002",
+    "name": "Auriculares Inalámbricos ProSound",
+    "description": "Auriculares con cancelación de ruido activa, batería de 30 horas y calidad de sonido Hi-Fi.",
+    "price": 149.50,
+    "currency": "USD",
+    "category": "Electrónica",
+    "brand": "AudioMax",
+    "stock": 300,
+    "image_url": "https://example.com/images/MP002.jpg",
+    "product_url": "https://example.com/products/MP002",
+    "tags": ["audio", "auriculares", "inalámbrico", "música"],
+    "historical_prices": [
+      {"date": "2023-09-01", "price": 179.00},
+      {"date": "2023-11-01", "price": 149.50}
+    ],
+    "ratings": {
+      "average_rating": 4.6,
+      "review_count": 1800
+    }
+  },
+  {
+    "id": "MP003",
+    "name": "Cafetera Espresso Automática",
+    "description": "Prepara tu espresso perfecto con solo tocar un botón. Molinillo integrado y espumador de leche.",
+    "price": 299.00,
+    "currency": "USD",
+    "category": "Hogar",
+    "brand": "HomeBeans",
+    "stock": 80,
+    "image_url": "https://example.com/images/MP003.jpg",
+    "product_url": "https://example.com/products/MP003",
+    "tags": ["café", "cocina", "electrodoméstico", "espresso"],
+    "historical_prices": [
+      {"date": "2023-08-15", "price": 320.00},
+      {"date": "2023-10-20", "price": 299.00}
+    ],
+    "ratings": {
+      "average_rating": 4.9,
+      "review_count": 950
+    }
+  }
+]

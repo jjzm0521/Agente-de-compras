@@ -1,0 +1,49 @@
+{
+  "user_id": "pinterest_user_456",
+  "boards": [
+    {
+      "board_id": "PIN_BOARD_01",
+      "board_name": "Tech Wishlist",
+      "pins": [
+        {
+          "pin_id": "PIN_001",
+          "image_url": "https://example.com/images/pinterest_pin_01.jpg",
+          "description": "El Smartphone Avanzado XZ100 parece increíble. Definitivamente en mi lista.",
+          "link": "https://example.com/products/MP001",
+          "detected_product_name": "Smartphone Avanzado XZ100",
+          "pinned_at": "2023-11-20T14:22:00Z"
+        },
+        {
+          "pin_id": "PIN_002",
+          "image_url": "https://example.com/images/pinterest_pin_02.jpg",
+          "description": "Estos auriculares inalámbricos serían perfectos para el gimnasio.",
+          "link": "https://example.com/products/MP002",
+          "detected_product_name": "Auriculares Inalámbricos ProSound",
+          "pinned_at": "2023-11-28T09:15:00Z"
+        }
+      ]
+    },
+    {
+      "board_id": "PIN_BOARD_02",
+      "board_name": "Home Decor Ideas",
+      "pins": [
+        {
+          "pin_id": "PIN_003",
+          "image_url": "https://example.com/images/pinterest_pin_03.jpg",
+          "description": "Una cafetera así quedaría genial en mi cocina.",
+          "link": "https://example.com/products/MP003",
+          "detected_product_name": "Cafetera Espresso Automática",
+          "pinned_at": "2023-12-02T11:05:00Z"
+        },
+        {
+          "pin_id": "PIN_004",
+          "image_url": "https://example.com/images/pinterest_pin_04.jpg",
+          "description": "Lámpara de diseño moderno para la sala.",
+          "link": "https://example.com/products/LP005",
+          "detected_product_name": "Lámpara Moderna LED",
+          "pinned_at": "2023-12-03T16:50:00Z"
+        }
+      ]
+    }
+  ]
+}

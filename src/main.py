@@ -20,8 +20,11 @@ def run_agent_demo():
         "user_profile": {"budget": 1000, "preferred_categories": ["Electrónica", "Hogar"]},
         "enriched_wishlist": [],
         "shopping_plan": {},
-        "search_criteria": None, # Inicializar search_criteria
-        "search_results": []     # Inicializar search_results
+        "search_criteria": None,
+        "search_results": [],
+        "ia_categorized_wishlist": None,
+        "wishlist_agent_error": None,
+        "raw_cart_items": None         # Inicializar para items de carrito procesados
     }
 
     print("\n--- 📊 Ejecutando Flujo del Agente (Plan de Compra Inicial) 📊 ---")
@@ -70,39 +73,26 @@ def run_agent_demo():
     print("\n--- ✅ Flujo de Búsqueda Completado ✅ ---")
     print("\n--- 📝 Resumen del Estado Final del Agente (Post-Búsqueda) 📝 ---")
 
-    if final_state.get('marketplace_products'):
-        print(f"🛒 Productos del Marketplace cargados: {len(final_state['marketplace_products'])} items")
-    else:
-        print("🛒 Productos del Marketplace: No cargados o error.")
+    # Mostrar resumen de datos cargados (opcional, puede ser verboso)
+    # ... (código de impresión de marketplace_products, instagram_saves, etc. puede ir aquí si se desea) ...
 
-    if final_state.get('instagram_saves') and final_state['instagram_saves'].get('saved_items'):
-        print(f"📸 Saves de Instagram procesados: {len(final_state['instagram_saves']['saved_items'])} items")
-    else:
-        print("📸 Saves de Instagram: No cargados o sin items.")
+    if final_state.get('wishlist_agent_error'):
+        print(f"⚠️ Error en WishlistAgent: {final_state['wishlist_agent_error']}")
 
-    if final_state.get('pinterest_boards') and final_state['pinterest_boards'].get('boards'):
-        num_pins = sum(len(b.get('pins', [])) for b in final_state['pinterest_boards']['boards'])
-        print(f"📌 Pines de Pinterest procesados: {num_pins} pines en {len(final_state['pinterest_boards']['boards'])} tableros")
+    if final_state.get('ia_categorized_wishlist'):
+        print(f"\n🎨 Wishlist Analizada por IA: {len(final_state['ia_categorized_wishlist'])} items")
+        for i, item in enumerate(final_state['ia_categorized_wishlist'][:3]): # Mostrar primeros 3 para brevedad
+            print(f"  Item IA {i+1}:")
+            print(f"    Texto Original: {item.get('original_text', '')[:50]}...")
+            print(f"    Producto IA: {item.get('identified_product_name', 'N/A')}")
+            print(f"    Categoría IA: {item.get('category', 'N/A')}")
+            print(f"    Sentimiento IA: {item.get('user_sentiment_or_intent', 'N/A')}")
+            print(f"    Fuente: {item.get('source', 'N/A')}")
     else:
-        print("📌 Pines de Pinterest: No cargados o sin tableros/pines.")
-
-    if final_state.get('abandoned_carts'):
-        print(f"💨 Carritos Abandonados procesados: {len(final_state['abandoned_carts'])} carritos")
-    else:
-        print("💨 Carritos Abandonados: No cargados o sin datos.")
-
-    if final_state.get('identified_user_wishlist'):
-        print(f"📋 Wishlist Identificada: {len(final_state['identified_user_wishlist'])} items potenciales.")
-        # Descomentar para ver detalles de la wishlist:
-        # print("   Detalles de la Wishlist:")
-        # for item in final_state['identified_user_wishlist']:
-        #     name = item.get('name', item.get('product_id', 'Desconocido'))
-        #     print(f"     - {name} (Fuente: {item.get('source')})")
-    else:
-        print("📋 Wishlist Identificada: Vacía.")
+        print("\n🎨 Wishlist Analizada por IA: No disponible o vacía.")
 
     if final_state.get('user_profile'):
-        print(f"👤 Perfil de Usuario: {final_state['user_profile']}")
+        print(f"\n👤 Perfil de Usuario: {final_state['user_profile']}")
     else:
         print("👤 Perfil de Usuario: No disponible.")
 
@@ -115,7 +105,11 @@ def run_agent_demo():
         print("\n🛒 Items para Comprar:")
         if plan.get('items_to_buy'):
             for item in plan['items_to_buy']:
-                print(f"  - {item.get('name') or item.get('marketplace_details', {}).get('name')} ({item.get('price')} {item.get('currency')}) - Fuente: {item.get('source')}")
+                item_name_display = item.get('identified_product_name', item.get('name', 'Desconocido'))
+                price_display = f"{item.get('price')} {item.get('currency')}" if item.get('price') else "Precio N/A"
+                print(f"  - {item_name_display} ({price_display}) - Fuente: {item.get('source')}")
+                if item.get('purchase_advice'):
+                    print(f"    ✨ Consejo IA: {item['purchase_advice']}")
         else:
             print("  No hay items para comprar dentro del presupuesto o disponibles.")
 

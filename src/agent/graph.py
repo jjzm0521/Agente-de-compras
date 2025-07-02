@@ -1,7 +1,17 @@
-from typing import Dict, Any, List, TypedDict, Optional
+from typing import Dict, Any, List, TypedDict, Optional, TYPE_CHECKING
+from langchain_core.prompts import ChatPromptTemplate
+#from langchain_core.pydantic_v1 import BaseModel, Field as PydanticField # Ya no se necesita aquí
 from langgraph.graph import StateGraph, END
+import os # Para getenv en generate_shopping_plan
+
 from src.utils import data_loader
-from .search_handler import search_products_node # Importar el nuevo nodo
+from src.utils.config import get_llm
+from .search_handler import search_products_node
+from .wishlist_agent import run_wishlist_agent
+from .planner_models import PurchaseAdvice, SHOPPING_ADVICE_PROMPT_TEMPLATE # Importar modelos y prompt
+
+if TYPE_CHECKING: # Evitar importación circular, aunque planner_models no importa graph
+    pass
 
 # --- Definición del Estado del Agente ---
 class AgentState(TypedDict):
@@ -22,6 +32,12 @@ class AgentState(TypedDict):
     # Para la funcionalidad de búsqueda
     search_criteria: Optional[Dict[str, Any]] # Ej: {"query": "cafetera", "max_price": 100}
     search_results: Optional[List[Dict[str, Any]]]
+
+    # Para el WishlistAgent con IA
+    ia_categorized_wishlist: Optional[List[Dict[str, Any]]] # Resultados del WishlistAgent
+    wishlist_agent_error: Optional[str] # Para capturar errores del WishlistAgent
+
+    raw_cart_items: Optional[List[Dict[str, Any]]] # Items de carritos procesados antes del matching
     # ... más campos según sea necesario
 
 # --- Nodos del Grafo ---
@@ -123,61 +139,167 @@ def initial_data_processing(state: AgentState) -> AgentState:
         state['search_criteria'] = None
     if 'search_results' not in state:
         state['search_results'] = None
+    if 'raw_cart_items' not in state: # Nuevo campo
+        state['raw_cart_items'] = []
+    if 'ia_categorized_wishlist' not in state: # Nuevo campo
+        state['ia_categorized_wishlist'] = []
+    if 'wishlist_agent_error' not in state: # Nuevo campo
+        state['wishlist_agent_error'] = None
+    return state
+
+# El nodo initial_data_processing se elimina. Su funcionalidad de extracción simple
+# es reemplazada por run_wishlist_agent para items de redes sociales
+# y un nuevo nodo extract_cart_data para los carritos.
+
+# Nuevo nodo para procesar carritos abandonados y prepararlos para el matching
+def extract_cart_data(state: AgentState) -> AgentState:
+    """
+    Extrae items de carritos abandonados y los formatea para el proceso de matching.
+    Estos items no pasan por el LLM en esta fase.
+    """
+    print("---EXTRAYENDO DATOS DE CARRITOS ABANDONADOS (PARA MATCHING DIRECTO)---")
+    abandoned_carts_data = state.get('abandoned_carts', []) # Cargado por load_abandoned_carts_data
+    processed_cart_items = []
+    if abandoned_carts_data:
+        for cart in abandoned_carts_data:
+            for item in cart.get('items', []):
+                # Guardamos la información original del item del carrito, más la fuente.
+                processed_cart_items.append({
+                    **item, # product_id, quantity, added_at
+                    "source": "abandoned_cart",
+                    "cart_id": cart.get('cart_id'),
+                    "user_id": cart.get('user_id')
+                })
+    state['raw_cart_items'] = processed_cart_items
+    print(f"Extraídos {len(processed_cart_items)} items de carritos abandonados para matching directo.")
     return state
 
 def product_matching_and_enrichment(state: AgentState) -> AgentState:
     """
-    Intenta hacer coincidir productos de la wishlist con el catálogo del marketplace
-    y enriquece la información.
+    Intenta hacer coincidir productos de ia_categorized_wishlist (proveniente del WishlistAgent)
+    y raw_cart_items con el catálogo del marketplace y enriquece la información.
     """
-    print("---REALIZANDO MATCHING Y ENRIQUECIMIENTO DE PRODUCTOS---")
-    enriched_items = []
+    print("---REALIZANDO MATCHING Y ENRIQUECIMIENTO DE PRODUCTOS (POST-IA Y CARRITOS)---")
+    enriched_items_final = []
     marketplace_products = state.get('marketplace_products', [])
-    identified_wishlist = state.get('identified_user_wishlist', [])
+
+    ia_wishlist = state.get('ia_categorized_wishlist', [])
+    raw_cart_items = state.get('raw_cart_items', [])
 
     if not marketplace_products:
         print("Advertencia: No hay productos del marketplace para hacer matching.")
-        state['enriched_wishlist'] = identified_wishlist # Pasar la wishlist sin enriquecer
+        # Combinar ia_wishlist y raw_cart_items (formateando raw_cart_items para que se parezcan)
+        # y devolverlos sin detalles del marketplace.
+        all_items_without_match = ia_wishlist # ya están en formato CategorizedItem (como dict)
+        for cart_item_info in raw_cart_items:
+            all_items_without_match.append({
+                'original_text': f"Item de carrito: ID {cart_item_info.get('product_id')}",
+                'identified_product_name': f"ID {cart_item_info.get('product_id')}",
+                'category': "Desconocida", 'key_features': [],
+                'user_sentiment_or_intent': 'abandono de carrito',
+                'source': cart_item_info.get('source', 'abandoned_cart'),
+                'original_item_details': cart_item_info,
+                'marketplace_details': None, 'price': None, 'in_stock': False
+            })
+        state['enriched_wishlist'] = all_items_without_match
         return state
 
-    for item in identified_wishlist:
+    # 1. Procesar items de la ia_categorized_wishlist (Instagram, Pinterest)
+    print(f"Procesando {len(ia_wishlist)} items de la IA Wishlist para matching...")
+    for ia_item_dict in ia_wishlist: # ia_item_dict es un dict del modelo CategorizedItem
         matched_product = None
-        # Intento de matching muy básico:
-        # 1. Por product_id si existe (ej: de carritos abandonados)
-        # 2. Por nombre detectado (puede ser impreciso)
-        if item.get('product_id'):
-            for mp_item in marketplace_products:
-                if mp_item['id'] == item['product_id']:
-                    matched_product = mp_item
-                    break
-        elif item.get('name'): # Matching por nombre (sensible a mayúsculas/minúsculas y variaciones)
-            for mp_item in marketplace_products:
-                if item['name'].lower() in mp_item['name'].lower() or mp_item['name'].lower() in item['name'].lower():
-                    matched_product = mp_item
-                    break
+        product_name_from_ia = ia_item_dict.get('identified_product_name')
 
-        enriched_item = item.copy()
+        if product_name_from_ia:
+            category_from_ia = ia_item_dict.get('category', '').lower()
+
+            best_match = None
+            weak_match = None
+
+            for mp_item in marketplace_products:
+                mp_name_lower = mp_item['name'].lower()
+                mp_category_lower = mp_item.get('category', '').lower()
+
+                name_match = product_name_from_ia.lower() in mp_name_lower or \
+                             mp_name_lower in product_name_from_ia.lower()
+
+                if name_match:
+                    if category_from_ia and mp_category_lower and category_from_ia == mp_category_lower:
+                        best_match = mp_item # Match fuerte (nombre y categoría)
+                        break # Tomar el primer match fuerte
+                    elif not weak_match: # Si aún no tenemos un match débil
+                        weak_match = mp_item # Guardar como match débil (solo nombre, o categoría no coincide/falta)
+
+            if best_match:
+                matched_product = best_match
+            elif weak_match:
+                matched_product = weak_match # Usar match débil si no hubo fuerte
+                if category_from_ia and matched_product.get('category') and category_from_ia != matched_product.get('category','').lower():
+                    print(f"Info: Producto IA '{product_name_from_ia}' (Cat IA: {ia_item_dict.get('category')}) macheado con '{matched_product['name']}' (Cat MP: {matched_product.get('category')}) por nombre, pero categorías difieren.")
+            # else: matched_product sigue siendo None
+
+        # ia_item_dict ya tiene la estructura base de CategorizedItem
+        # Solo necesitamos añadir/actualizar los detalles del marketplace
+        enriched_item_from_ia = ia_item_dict.copy()
         if matched_product:
-            enriched_item['marketplace_details'] = matched_product
-            enriched_item['price'] = matched_product.get('price')
-            enriched_item['currency'] = matched_product.get('currency')
-            enriched_item['in_stock'] = matched_product.get('stock', 0) > 0
-            print(f"Producto '{item.get('name') or item.get('product_id')}' macheado con '{matched_product['name']}'")
+            enriched_item_from_ia['marketplace_details'] = matched_product
+            enriched_item_from_ia['price'] = matched_product.get('price')
+            enriched_item_from_ia['currency'] = matched_product.get('currency')
+            enriched_item_from_ia['in_stock'] = matched_product.get('stock', 0) > 0
+            print(f"Producto IA '{product_name_from_ia}' macheado con '{matched_product['name']}'")
         else:
-            enriched_item['marketplace_details'] = None
-            enriched_item['price'] = None # O un precio estimado si tuviéramos otra fuente
-            enriched_item['in_stock'] = False
-            print(f"Producto '{item.get('name') or item.get('product_id')}' no encontrado en el marketplace.")
+            enriched_item_from_ia['marketplace_details'] = None # Asegurar que esté explícitamente
+            enriched_item_from_ia['price'] = None
+            enriched_item_from_ia['in_stock'] = False
+            print(f"Producto IA '{product_name_from_ia}' no encontrado en el marketplace.")
+        enriched_items_final.append(enriched_item_from_ia)
 
-        enriched_items.append(enriched_item)
+    # 2. Procesar items de raw_cart_items (Carritos Abandonados)
+    print(f"Procesando {len(raw_cart_items)} items de carritos abandonados para matching...")
+    for cart_item_info in raw_cart_items:
+        matched_product = None
+        product_id = cart_item_info.get('product_id')
 
-    state['enriched_wishlist'] = enriched_items
-    print(f"Total de items en wishlist enriquecida: {len(enriched_items)}")
+        # Crear una estructura base similar a CategorizedItem para consistencia
+        cart_item_for_enrichment = {
+            'original_text': f"Item de carrito: ID {product_id}, Cantidad: {cart_item_info.get('quantity',1)}",
+            'identified_product_name': f"Producto ID: {product_id}", # Placeholder, se actualizará si hay match
+            'category': "Desconocida", # Placeholder
+            'key_features': [],
+            'user_sentiment_or_intent': 'producto en carrito abandonado',
+            'source': cart_item_info.get('source', 'abandoned_cart'),
+            'original_item_details': cart_item_info,
+            'marketplace_details': None,
+            'price': None,
+            'in_stock': False
+        }
+
+        if product_id:
+            for mp_item in marketplace_products:
+                if mp_item['id'] == product_id:
+                    matched_product = mp_item
+                    break
+
+        if matched_product:
+            cart_item_for_enrichment['identified_product_name'] = matched_product.get('name')
+            cart_item_for_enrichment['category'] = matched_product.get('category')
+            cart_item_for_enrichment['marketplace_details'] = matched_product
+            cart_item_for_enrichment['price'] = matched_product.get('price')
+            cart_item_for_enrichment['currency'] = matched_product.get('currency')
+            cart_item_for_enrichment['in_stock'] = matched_product.get('stock', 0) > 0
+            print(f"Item de carrito ID '{product_id}' macheado con '{matched_product['name']}'")
+        else:
+            print(f"Item de carrito ID '{product_id}' no encontrado en el marketplace.")
+        enriched_items_final.append(cart_item_for_enrichment)
+
+    state['enriched_wishlist'] = enriched_items_final
+    print(f"Total de items en wishlist enriquecida (IA + Carritos): {len(enriched_items_final)}")
     return state
 
 def generate_shopping_plan(state: AgentState) -> AgentState:
     """
     Genera un plan de compra basado en la wishlist enriquecida y el perfil del usuario.
+    También intenta generar consejos de compra personalizados usando un LLM para algunos items.
     """
     print("---GENERANDO PLAN DE COMPRA---")
     enriched_wishlist = state.get('enriched_wishlist', [])
@@ -241,10 +363,63 @@ def generate_shopping_plan(state: AgentState) -> AgentState:
     }
 
     state['shopping_plan'] = shopping_plan
-    print(f"Plan de compra generado con {len(items_to_buy)} items para comprar.")
+    print(f"Plan de compra generado con {len(items_to_buy)} items para comprar (antes de consejos IA).")
     print(f"Costo total estimado: {current_cost} {shopping_plan['currency'] if shopping_plan['currency'] else ''}")
     print(f"{len(recommendations)} recomendaciones adicionales generadas.")
+
+    # --- Tarea IA: Generar consejo para algunos items ---
+    if items_to_buy: # Solo si hay items para comprar
+        try:
+            llm = get_llm(temperature=0.7, model_name=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")) # Temp más alta para creatividad
+
+            advice_prompt = ChatPromptTemplate.from_template(SHOPPING_ADVICE_PROMPT_TEMPLATE)
+            advice_chain = advice_prompt | llm.with_structured_output(PurchaseAdvice)
+
+            items_with_advice = []
+            # Generar consejo para los primeros N items (ej. 2)
+            # Asegurarse de que los items tengan la info necesaria para el prompt
+            for i, item_to_advise in enumerate(items_to_buy):
+                if i >= 2: # Limitar a 2 items por ahora
+                    items_with_advice.append(item_to_advise) # Añadir el resto sin consejo
+                    continue
+
+                product_name = item_to_advise.get('identified_product_name', 'Producto desconocido')
+                marketplace_details = item_to_advise.get('marketplace_details', {})
+
+                item_payload = {
+                    "product_name": product_name,
+                    "product_category": item_to_advise.get('category', marketplace_details.get('category', 'No especificada')),
+                    "product_price": str(item_to_advise.get('price', marketplace_details.get('price', 'N/A'))),
+                    "product_currency": item_to_advise.get('currency', marketplace_details.get('currency', '')),
+                    "key_features": ", ".join(item_to_advise.get('key_features', [])[:3]), # Primeras 3 características
+                    "source": item_to_advise.get('source', 'desconocida'),
+                    "user_sentiment": item_to_advise.get('user_sentiment_or_intent', 'interés general')
+                }
+
+                try:
+                    print(f"Generando consejo IA para: {product_name}")
+                    advice_response = advice_chain.invoke(item_payload)
+                    # Añadir el consejo al item
+                    item_copy = item_to_advise.copy()
+                    item_copy['purchase_advice'] = advice_response.advice
+                    items_with_advice.append(item_copy)
+                    print(f"Consejo para '{advice_response.item_name}': {advice_response.advice}")
+                except Exception as e_advice:
+                    print(f"Error generando consejo IA para '{product_name}': {e_advice}")
+                    items_with_advice.append(item_to_advise) # Añadir sin consejo si falla
+
+            shopping_plan['items_to_buy'] = items_with_advice # Actualizar con los consejos
+            print("Consejos de IA añadidos al plan de compra.")
+
+        except ValueError as e_llm: # Error al obtener LLM (API key)
+            print(f"Error al inicializar LLM para consejos de compra: {e_llm}. No se añadirán consejos IA.")
+        except Exception as e_gen:
+            print(f"Error inesperado durante la generación de consejos IA: {e_gen}. No se añadirán consejos IA.")
+
+    state['shopping_plan'] = shopping_plan
     return state
+
+# SHOPPING_ADVICE_PROMPT_TEMPLATE y PurchaseAdvice ahora se importan de .planner_models
 
 # --- Construcción del Grafo ---
 def create_graph():
@@ -255,26 +430,35 @@ def create_graph():
     workflow.add_node("load_marketplace", load_marketplace_data)
     workflow.add_node("load_instagram", load_instagram_data)
     workflow.add_node("load_pinterest", load_pinterest_data)
-    workflow.add_node("load_carts", load_abandoned_carts_data)
-    workflow.add_node("initial_processing", initial_data_processing)
-    workflow.add_node("product_matching", product_matching_and_enrichment)
+    workflow.add_node("load_carts", load_abandoned_carts_data) # Carga los datos crudos de carritos
+
+    workflow.add_node("wishlist_analyzer_node", run_wishlist_agent) # Nuevo: Analiza Instagram y Pinterest con IA
+    workflow.add_node("extract_cart_data_node", extract_cart_data) # Nuevo: Procesa carritos para matching directo
+
+    workflow.add_node("product_matching", product_matching_and_enrichment) # Modificado: Usa salida de IA y carritos procesados
     workflow.add_node("generate_plan", generate_shopping_plan)
+    workflow.add_node("search_products", search_products_node)
 
     # Definir el flujo
+    # 1. Cargar todos los datos
     workflow.set_entry_point("load_marketplace")
     workflow.add_edge("load_marketplace", "load_instagram")
     workflow.add_edge("load_instagram", "load_pinterest")
     workflow.add_edge("load_pinterest", "load_carts")
-    workflow.add_edge("load_carts", "initial_processing")
-    workflow.add_edge("initial_processing", "product_matching")
+
+    # 2. Después de cargar todo, procesar en paralelo (o secuencialmente si es más simple por ahora)
+    #    los items de redes sociales con IA y los items de carritos.
+    #    Para LangGraph, los flujos paralelos se manejan con múltiples aristas desde un nodo
+    #    o usando un nodo "router" condicional. Por simplicidad, haremos un flujo secuencial
+    #    donde el WishlistAgent opera sobre los datos de redes sociales, y extract_cart_data
+    #    opera sobre los datos de carritos. Ambos resultados alimentarán el nodo de matching.
+
+    workflow.add_edge("load_carts", "wishlist_analyzer_node") # WishlistAnalyzer usa datos de Insta/Pin
+    workflow.add_edge("wishlist_analyzer_node", "extract_cart_data_node") # Luego procesar carritos
+    workflow.add_edge("extract_cart_data_node", "product_matching") # Matching usa ambos resultados
+
+    # 3. Continuar con el flujo existente
     workflow.add_edge("product_matching", "generate_plan")
-    # workflow.add_edge("generate_plan", END) # Ya no es el final si queremos permitir búsqueda después
-
-    # Nuevo nodo de búsqueda y flujo condicional (o secuencial por ahora)
-    workflow.add_node("search_products", search_products_node)
-
-    # Flujo: Después de generar el plan, va al nodo de búsqueda.
-    # Más adelante, esto podría ser condicional o un punto de entrada diferente.
     workflow.add_edge("generate_plan", "search_products")
     workflow.add_edge("search_products", END)
 

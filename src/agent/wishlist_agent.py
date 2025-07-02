@@ -1,9 +1,10 @@
+import json
 from typing import Dict, Any, List, Optional
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field # <--- CAMBIO AQUÍ
 
 from src.utils.config import get_llm
-from src.utils.data_loader import get_instagram_saves, get_pinterest_boards # Asumiendo que aún cargaremos así
+from src.utils.data_loader import get_instagram_saves, get_pinterest_boards
 
 # --- Pydantic Modelos para la Salida Estructurada del LLM ---
 class CategorizedItem(BaseModel):

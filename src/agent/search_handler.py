@@ -1,7 +1,14 @@
 from typing import List, Dict, Any, Optional
+from langchain_core.tools import tool
 
-def search_products_in_marketplace(
-    marketplace_products: Optional[List[Dict[str, Any]]],
+# La lista de productos del marketplace se pasará como un argumento más a la herramienta,
+# o la herramienta la accederá desde un contexto/estado si se diseña así.
+# Por ahora, para que sea una herramienta autocontenida que el MasterAgent pueda invocar
+# con todos sus datos necesarios, es mejor pasar marketplace_products.
+
+@tool
+def catalog_search_tool(
+    marketplace_products: List[Dict[str, Any]],
     query: Optional[str] = None,
     category: Optional[str] = None,
     brand: Optional[str] = None,
@@ -95,13 +102,14 @@ def search_products_node(state: Dict[str, Any]) -> Dict[str, Any]:
         in_stock=criteria.get('in_stock')
     )
 
-    state['search_results'] = results
-    print(f"Se encontraron {len(results)} productos.")
-    return state
+    # marketplace_products es ahora un argumento requerido.
+    # El nodo search_products_node ya no es necesario aquí,
+    # la herramienta será llamada directamente.
+
 
 if __name__ == '__main__':
-    # Ejemplo de uso directo de la función de búsqueda
-    mock_products = [
+    # Ejemplo de uso directo de la función de búsqueda (ahora @tool)
+    mock_products_data = [
         {
             "id": "MP001", "name": "Smartphone Avanzado XZ100", "price": 799.99, "category": "Electrónica",
             "brand": "TechGlobal", "stock": 10, "ratings": {"average_rating": 4.8},
@@ -125,21 +133,39 @@ if __name__ == '__main__':
     ]
 
     print("Búsqueda 1: 'smartphone'")
-    res1 = search_products_in_marketplace(mock_products, query="smartphone")
+    res1 = catalog_search_tool.invoke({
+        "marketplace_products": mock_products_data,
+        "query": "smartphone"
+    })
     for r in res1: print(f"  - {r['name']}")
 
     print("\nBúsqueda 2: categoría 'Hogar', max_price 300")
-    res2 = search_products_in_marketplace(mock_products, category="Hogar", max_price=300)
+    res2 = catalog_search_tool.invoke({
+        "marketplace_products": mock_products_data,
+        "category": "Hogar",
+        "max_price": 300
+    })
     for r in res2: print(f"  - {r['name']}")
 
     print("\nBúsqueda 3: marca 'AudioMax', in_stock True")
-    res3 = search_products_in_marketplace(mock_products, brand="AudioMax", in_stock=True)
+    res3 = catalog_search_tool.invoke({
+        "marketplace_products": mock_products_data,
+        "brand": "AudioMax",
+        "in_stock": True
+    })
     for r in res3: print(f"  - {r['name']}") # No debería encontrar nada
 
     print("\nBúsqueda 4: min_rating 4.7")
-    res4 = search_products_in_marketplace(mock_products, min_rating=4.7)
+    res4 = catalog_search_tool.invoke({
+        "marketplace_products": mock_products_data,
+        "min_rating": 4.7
+    })
     for r in res4: print(f"  - {r['name']}")
 
     print("\nBúsqueda 5: query 'tv', in_stock True")
-    res5 = search_products_in_marketplace(mock_products, query="tv", in_stock=True)
+    res5 = catalog_search_tool.invoke({
+        "marketplace_products": mock_products_data,
+        "query": "tv",
+        "in_stock": True
+    })
     for r in res5: print(f"  - {r['name']}")

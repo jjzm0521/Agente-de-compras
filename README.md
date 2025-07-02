@@ -72,6 +72,17 @@ La demostración actual utiliza datos simulados (archivos JSON en la carpeta `da
 └── AGENTS.md             # Directrices para el desarrollo con IA
 ```
 
+## Arquitectura del Agente (Evolucionando)
+
+Este proyecto está evolucionando hacia una **arquitectura conversacional multi-agente** utilizando LangGraph. El objetivo es tener:
+
+1.  Un **`ConversationalMasterAgent`**: Actúa como el orquestador principal, interactuando con el usuario en lenguaje natural, interpretando sus intenciones y delegando tareas a agentes especializados.
+2.  **Agentes Especializados**: Módulos enfocados en tareas específicas (ej: analizar wishlists, buscar en catálogo, planificar compras, descubrir productos). Estos se están refactorizando para funcionar como "herramientas" que el `ConversationalMasterAgent` puede invocar.
+
+Actualmente, se ha implementado un **esqueleto del `ConversationalMasterAgent`**. Este esqueleto establece un bucle de chat básico en la línea de comandos (CLI) pero aún no utiliza LLMs para la toma de decisiones complejas ni invoca a los agentes especializados como herramientas de forma dinámica.
+
+El `CatalogSearchAgent` ha sido refactorizado como una herramienta (`catalog_search_tool`) lista para ser integrada.
+
 ## Cómo Ejecutar
 
 ### Requisitos Previos
@@ -80,10 +91,11 @@ Asegúrate de tener Python 3.9 o superior instalado.
 ### Instalación de Dependencias
 Las dependencias principales incluyen `langgraph`, `langchain`, `langchain-openai` y `python-dotenv`. Puedes instalarlas (idealmente en un entorno virtual):
 ```bash
-pip install langgraph langchain langchain_core langchain-openai python-dotenv
+pip install langgraph langchain langchain_core langchain-openai python-dotenv pydantic
 # Para la visualización del grafo (opcional, requiere Graphviz instalado en el sistema):
 # pip install pygraphviz # Puede tener dependencias de sistema como graphviz.
 ```
+(Nota: `pydantic` se añade explícitamente ya que ahora lo usamos directamente.)
 
 ### Configuración de la API Key de OpenAI
 **Este paso es crucial para que funcionen las características de Inteligencia Artificial.**
@@ -95,17 +107,34 @@ pip install langgraph langchain langchain_core langchain-openai python-dotenv
 
 El archivo `.env` está incluido en `.gitignore`, por lo que tu API key no se compartirá si subes el código a un repositorio Git.
 
-Si no configuras la API Key, el programa se ejecutará, pero las funcionalidades de IA (análisis de wishlist, consejos de compra) mostrarán un error indicando que la API Key no fue encontrada y no podrán operar.
+Si no configuras la API Key, el programa se ejecutará, pero las funcionalidades que dependen de un LLM (como el análisis de wishlist o la generación de consejos por el `ConversationalMasterAgent` en el futuro) mostrarán un error indicando que la API Key no fue encontrada o es inválida. El esqueleto actual del chat funcionará, pero sin la inteligencia del LLM.
 
-### Ejecutar la Demostración Principal
-El script principal `src/main.py` ejecuta todo el flujo del agente, incluyendo la carga de datos, generación del plan de compra y una búsqueda de productos simulada.
+### Ejecutar el Agente Conversacional (Esqueleto)
+El script principal `src/main.py` ahora inicia una interfaz de chat en la línea de comandos (CLI) para interactuar con el esqueleto del `ConversationalMasterAgent`.
 Para ejecutarlo desde la raíz del repositorio:
 ```bash
 python -m src.main
 ```
-Esto mostrará en la consola los pasos que el agente está realizando y los resultados finales, incluyendo el plan de compra y los resultados de la búsqueda.
+Se te presentará un prompt `👤 Tú: `. Puedes escribir mensajes y el agente (en su estado actual de esqueleto) responderá de forma simple. Escribe "adiós" o "salir" para terminar la sesión.
 
-### Ejecutar las Pruebas Unitarias
+Los datos iniciales (catálogo de productos, ejemplos de wishlist de redes sociales, etc.) se cargan una vez al inicio para que estén disponibles en el estado del agente, en preparación para cuando el `ConversationalMasterAgent` pueda usar herramientas que accedan a estos datos.
+
+### Ejecutar Pruebas Específicas de Componentes
+Algunos módulos tienen bloques `if __name__ == '__main__':` que permiten probar su funcionalidad de forma aislada:
+-   **Probar la herramienta de búsqueda en catálogo**:
+    ```bash
+    python src/agent/search_handler.py
+    ```
+-   **Probar el WishlistAgent (requiere API Key configurada para ver resultados IA)**:
+    ```bash
+    python src/agent/wishlist_agent.py
+    ```
+-   **Probar el esqueleto del MasterAgent**:
+    ```bash
+    python src/agent/master_agent.py
+    ```
+
+### Ejecutar las Pruebas Unitarias (Existentes)
 Para ejecutar las pruebas unitarias, navega a la raíz del repositorio y ejecuta:
 ```bash
 python -m unittest discover -s tests -v
@@ -114,36 +143,37 @@ Esto descubrirá y correrá todas las pruebas definidas en la carpeta `tests/`.
 
 ## Flujo de la Demostración (`src/main.py`)
 
-1.  **Inicialización**: Se crea el grafo del agente y se define un estado inicial (incluyendo un presupuesto simulado y campos para los resultados de la IA).
-2.  **Primera Invocación del Grafo (Flujo Principal del Agente)**:
-    *   **Carga de Datos**: Se cargan todos los datos de las fuentes simuladas (marketplace, Instagram, Pinterest, carritos).
-    *   **Análisis de Wishlist con IA (WishlistAgent)**:
-        *   Los items de Instagram y Pinterest son analizados por un LLM (GPT-4o Mini o el configurado) para extraer nombre del producto, categoría, características y sentimiento del usuario.
-        *   Si la API Key de OpenAI no está configurada, este paso reportará un error y la wishlist analizada por IA estará vacía.
-    *   **Extracción de Datos de Carrito**: Los items de carritos abandonados se procesan para un matching directo por ID.
-    *   **Matching y Enriquecimiento de Productos**:
-        *   Los productos de la wishlist analizada por IA se intentan hacer coincidir con el catálogo del marketplace, usando el nombre y la categoría identificados por la IA para mejorar la precisión.
-        *   Los items de carritos se machean directamente por su ID de producto.
-        *   Todos los items macheados se enriquecen con detalles del marketplace (precio, stock, etc.).
-    *   **Generación de Plan de Compra (ShoppingPlannerAgent)**:
-        *   Se genera un plan de compra basado en la wishlist enriquecida y el presupuesto.
-        *   **Consejos de Compra con IA**: Para los primeros items del plan, se intenta usar el LLM para generar consejos de compra personalizados. Si la API Key no está configurada, no se generarán consejos.
-    *   **Búsqueda de Productos (Inicial)**: El nodo de búsqueda se ejecuta (sin criterios inicialmente), indicando que no se proporcionaron criterios.
-3.  **Simulación de Búsqueda de Productos (Segunda Parte del Flujo en `main.py`)**:
-    *   Se establecen criterios de búsqueda simulados en el estado del agente (ej: buscar "cafetera" con un precio máximo).
-4.  **Segunda Invocación del Grafo (para la Búsqueda)**:
-    *   El grafo se invoca nuevamente con el estado actualizado. **Importante**: En esta demo, esto significa que los nodos anteriores (incluyendo las llamadas a IA) se ejecutan de nuevo. En una aplicación más compleja, se optimizaría este flujo.
-    *   El nodo de búsqueda de productos ahora utiliza los criterios proporcionados para filtrar los productos del marketplace.
-5.  **Resultados Finales**:
-    *   Se imprime un resumen completo del estado final del agente:
-        *   Errores del WishlistAgent (si los hubo).
-        *   Un resumen de la wishlist analizada por IA.
-        *   El plan de compra, incluyendo los consejos de IA si se generaron.
-        *   Los resultados de la búsqueda de productos.
+## Flujo de la Demostración (Actual con Esqueleto Conversacional)
+
+El script `src/main.py` ahora opera de la siguiente manera:
+
+1.  **Inicialización**:
+    *   Se crea el grafo conversacional (`create_conversational_graph`).
+    *   Se inicializa el `AgentState` con campos para el historial de conversación, datos de productos (cargados una vez), perfil de usuario, etc.
+    *   Se cargan los datos simulados (catálogo, Instagram, Pinterest, carritos) en el estado inicial. Esto se hace para que las futuras herramientas tengan acceso a estos datos sin necesidad de cargarlos en cada turno de conversación.
+2.  **Bucle de Conversación (CLI)**:
+    *   El programa entra en un bucle `while True`.
+    *   **Entrada del Usuario**: Se solicita al usuario que ingrese un mensaje a través del prompt `👤 Tú: `.
+    *   **Actualización del Estado**: La entrada del usuario se almacena en `current_state['current_user_input']`.
+    *   **Invocación del Grafo**: Se invoca el grafo conversacional con el `current_state`.
+        *   `get_input_node`: Verifica la entrada del usuario en el estado.
+        *   `master_agent_node`: Ejecuta el `run_conversational_master_agent` (esqueleto actual). Este procesa la entrada, actualiza el historial y decide la siguiente acción (ej: "respond_to_user" o "end_conversation").
+        *   `respond_to_user_node`: Prepara la respuesta (en el esqueleto, el `master_agent_node` ya formuló el texto de respuesta).
+        *   **Condicional `should_continue_conversation`**: Determina si el ciclo debe continuar o terminar.
+    *   **Salida al Usuario**: La respuesta del `master_agent_node` (almacenada en `master_agent_decision.response_text`) se imprime en la consola (actualmente esto ocurre dentro de los nodos del grafo con `print`, pero podría centralizarse en `main.py`).
+    *   **Terminación**: Si el `master_agent_node` decide `end_conversation` (ej: si el usuario escribe "adiós"), el bucle termina.
+
+**Nota sobre el Flujo Anterior (Pipeline):**
+La función `create_pipeline_graph()` en `src/agent/graph.py` contiene el grafo del pipeline anterior que procesaba los datos de forma lineal. Ya no es el flujo principal ejecutado por `main.py` pero se conserva como referencia o para posibles usos futuros.
 
 ## Próximos Pasos (Plan General)
 
-Consultar el plan activo del agente IA para los detalles. Mejoras futuras podrían incluir:
+Consultar el plan activo del agente IA para los detalles. La evolución se centrará en:
+-   Dotar de inteligencia al `ConversationalMasterAgent` usando un LLM para interpretar la intención del usuario y enrutar a herramientas.
+-   Refactorizar completamente los agentes especializados (`WishlistAgent`, `ShoppingPlannerAgent`, etc.) como herramientas LangChain.
+-   Integrar estas herramientas para que el `ConversationalMasterAgent` las pueda invocar dinámicamente.
+-   Mejorar el manejo del estado y el historial de la conversación.
+-   Expandir las capacidades de cada agente especializado.
 -   Mejorar el algoritmo de matching de productos (ej. usando embeddings o técnicas de NLP más avanzadas).
 -   Refinar la lógica de priorización del plan de compra.
 -   Implementar una interfaz de usuario (CLI o web básica) en lugar de simular la interacción en `main.py`.

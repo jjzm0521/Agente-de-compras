@@ -44,6 +44,7 @@ class AgentState(TypedDict):
     conversation_history: Optional[List[Tuple[str, str]]]
     current_user_input: Optional[str]
     master_agent_decision: Optional[Dict[str, Any]] # Salida del MasterAgent (ej: qué hacer después)
+    catalog_search_output: Optional[List[Dict[str, Any]]] # Resultado de la herramienta de búsqueda
     # ... más campos según sea necesario
 
 # --- Nodos del Grafo ---
@@ -450,11 +451,19 @@ def create_conversational_graph():
 
     def master_agent_node(state: AgentState) -> AgentState:
         print("--- (Grafo) Master Agent Procesando ---")
-        user_input = state.get("current_user_input", "")
+        user_input = state.get("current_user_input", "") # Puede ser None si venimos de un tool_result
         history = state.get("conversation_history", [])
+        search_results = state.get("catalog_search_output") # Obtener resultados de la herramienta
 
-        # Llamar a la lógica del MasterAgent (esqueleto por ahora)
-        decision_obj = run_conversational_master_agent(user_input, history)
+        # Llamar a la lógica del MasterAgent
+        decision_obj = run_conversational_master_agent(
+            user_input=user_input if user_input is not None else "", # Pasar string vacío si es None
+            conversation_history=history,
+            catalog_search_results=search_results
+        )
+
+        # Limpiar el output de la herramienta después de que el MasterAgent lo haya visto/procesado
+        state['catalog_search_output'] = None
 
         # Actualizar historial y decisión en el estado
         # Solo añadir a historial si hubo input real y respuesta.
@@ -468,7 +477,7 @@ def create_conversational_graph():
 
         state['master_agent_decision'] = decision_obj.model_dump()
         state['conversation_history'] = new_history
-        # state['current_user_input'] = None # Se limpia en main.py antes de la siguiente iteración del bucle
+        state['current_user_input'] = None # Limpiar input después de procesarlo en este turno del grafo
         return state
 
     def respond_to_user_node(state: AgentState) -> AgentState:
@@ -480,32 +489,103 @@ def create_conversational_graph():
         return state
 
     # Añadir nodos al workflow
+    # workflow.add_node("get_input", get_user_input_node) # Movido abajo
+    # workflow.add_node("master_agent", master_agent_node) # Movido abajo
+    # workflow.add_node("respond_to_user", respond_to_user_node) # Movido abajo
+
+
+    # --- Nodo para Ejecutar Herramientas ---
+    def execute_tool_node(state: AgentState) -> AgentState:
+        print("--- (Grafo) Ejecutando Herramienta ---")
+        decision = state.get('master_agent_decision')
+        tool_name = decision.get('tool_to_call')
+        tool_input = decision.get('tool_input')
+
+        if tool_name == "catalog_search_tool":
+            if tool_input is None: # Asegurar que tool_input no sea None
+                tool_input = {}
+
+            # La herramienta necesita marketplace_products, que está en el estado global.
+            marketplace_products = state.get("marketplace_products", [])
+            if not marketplace_products:
+                print("ADVERTENCIA: No hay productos del marketplace cargados para la búsqueda.")
+                state['catalog_search_output'] = [{"error": "No hay productos del marketplace cargados."}]
+            else:
+                # Pasar marketplace_products como parte del input a la herramienta
+                full_tool_input = {**tool_input, "marketplace_products": marketplace_products}
+                try:
+                    print(f"Llamando a catalog_search_tool con input: {tool_input}") # No imprimir marketplace_products aquí por verbosidad
+                    # La herramienta se invoca con un solo diccionario de argumentos
+                    results = catalog_search_tool.invoke(full_tool_input)
+                    state['catalog_search_output'] = results
+                    print(f"Resultado de catalog_search_tool: {len(results)} items encontrados.")
+                except Exception as e_tool:
+                    print(f"Error ejecutando catalog_search_tool: {e_tool}")
+                    state['catalog_search_output'] = [{"error": f"Error en la herramienta: {str(e_tool)}"}]
+        else:
+            print(f"Advertencia: Herramienta desconocida o no especificada: {tool_name}")
+            # Podríamos poner un error genérico en el output si es necesario
+
+        # Limpiar la decisión de la herramienta para que no se vuelva a ejecutar indefinidamente.
+        # El MasterAgent deberá procesar el output de la herramienta en su siguiente turno.
+        state['master_agent_decision'] = {
+            **(state.get('master_agent_decision') or {}), # mantener otras partes de la decisión si las hubiera
+            'tool_to_call': None,
+            'tool_input': None
+            # 'next_action' ya no se establece a 'process_tool_result' aquí,
+            # el MasterAgent detectará el output de la herramienta directamente.
+        }
+        return state
+
+    # 1. Definir todas las funciones de los nodos (get_user_input_node, master_agent_node, respond_to_user_node, execute_tool_node)
+    #    (Ya están definidas arriba en el código)
+
+    # 2. Añadir todos los nodos al workflow
     workflow.add_node("get_input", get_user_input_node)
     workflow.add_node("master_agent", master_agent_node)
+    workflow.add_node("execute_tool", execute_tool_node)
     workflow.add_node("respond_to_user", respond_to_user_node)
 
-    # Definir el flujo del esqueleto conversacional
+    # 3. Definir el punto de entrada y las aristas
     workflow.set_entry_point("get_input")
     workflow.add_edge("get_input", "master_agent")
-    workflow.add_edge("master_agent", "respond_to_user")
 
-    # Lógica condicional para continuar o terminar la conversación
-    def should_continue_conversation(state: AgentState) -> str:
+    # Lógica condicional después de la decisión del Master Agent
+    def route_after_master_agent(state: AgentState) -> str:
         decision = state.get('master_agent_decision')
         if decision and decision.get('next_action') == "end_conversation":
-            print("--- (Grafo) Decisión: Terminar Conversación ---")
-            return "end_it" # Usar un nombre de arista diferente a END para claridad
-        # En el futuro: "call_tool_X", "ask_clarification"
-        print("--- (Grafo) Decisión: Continuar Conversación ---")
-        return "continue_it"
+            print("--- (Grafo) Decisión del MasterAgent: Terminar Conversación ---")
+            return "end_conversation"
+        elif decision and decision.get('tool_to_call') and decision.get('next_action') == "call_tool":
+            print(f"--- (Grafo) Decisión del MasterAgent: Llamar Herramienta '{decision['tool_to_call']}' ---")
+            return "call_tool"
+
+        print("--- (Grafo) Decisión del MasterAgent: Responder al Usuario Directamente ---")
+        return "respond_directly"
+
+    workflow.add_conditional_edges(
+        "master_agent",
+        route_after_master_agent,
+        {
+            "end_conversation": "respond_to_user", # Responder antes de terminar
+            "call_tool": "execute_tool",
+            "respond_directly": "respond_to_user"
+        }
+    )
+
+    # Después de ejecutar una herramienta, volver al MasterAgent para procesar el resultado
+    workflow.add_edge("execute_tool", "master_agent")
+
+    # Lógica condicional después de responder al usuario (si no se llamó a herramienta o se terminó)
+    def should_loop_or_end(state: AgentState) -> str:
+        decision = state.get('master_agent_decision')
+        if decision and decision.get('next_action') == "end_conversation":
+            return END # Terminar el grafo
+        return "get_input" # Volver a pedir input
 
     workflow.add_conditional_edges(
         "respond_to_user",
-        should_continue_conversation,
-        {
-            "end_it": END,
-            "continue_it": "get_input", # Vuelve al inicio del ciclo para esperar nuevo input
-        }
+        should_loop_or_end
     )
 
     # Los nodos de carga de datos y el flujo de pipeline anterior (load_marketplace, run_wishlist_agent, etc.)

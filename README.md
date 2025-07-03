@@ -81,7 +81,7 @@ Este proyecto está evolucionando hacia una **arquitectura conversacional multi-
 
 Actualmente, se ha implementado un **esqueleto mejorado del `ConversationalMasterAgent`**. Este agente ahora:
 -   Establece un bucle de chat básico en la línea de comandos (CLI).
--   Intenta usar un LLM (si la API Key de OpenAI está configurada) para detectar la intención del usuario (ej: saludo, buscar producto, despedida).
+-   Intenta usar un Modelo de Lenguaje Grande (LLM) (si la API Key de OpenAI está configurada) para la Comprensión del Lenguaje Natural (NLU), permitiendo detectar la intención del usuario (ej: saludo, buscar producto, despedida) a partir de su entrada de texto.
 -   Si la intención es "buscar producto" y se extrae una consulta:
     -   Decide llamar a la herramienta `catalog_search_tool`.
     -   El grafo ejecuta la herramienta.

@@ -95,14 +95,74 @@ El `CatalogSearchAgent` ha sido refactorizado como una herramienta (`catalog_sea
 ### Requisitos Previos
 Asegúrate de tener Python 3.9 o superior instalado.
 
-### Instalación de Dependencias
-Las dependencias principales incluyen `langgraph`, `langchain`, `langchain-openai` y `python-dotenv`. Puedes instalarlas (idealmente en un entorno virtual):
-```bash
-pip install langgraph langchain langchain_core langchain-openai python-dotenv pydantic
-# Para la visualización del grafo (opcional, requiere Graphviz instalado en el sistema):
-# pip install pygraphviz # Puede tener dependencias de sistema como graphviz.
-```
-(Nota: `pydantic` se añade explícitamente ya que ahora lo usamos directamente.)
+### Configuración del Entorno Virtual e Instalación de Dependencias
+
+**Opción 1: Usando los scripts de configuración (Recomendado)**
+
+Estos scripts automatizan la creación del entorno virtual y la instalación de dependencias.
+
+*   **Para MacOS y Linux:**
+    Abre una terminal en la raíz del proyecto y ejecuta:
+    ```bash
+    source setup.sh
+    ```
+    Este script creará el entorno virtual `.venv` si no existe, lo activará e instalará las dependencias listadas en `requirements.txt`.
+
+*   **Para Windows:**
+    Abre una terminal (CMD o PowerShell) en la raíz del proyecto y ejecuta:
+    ```bash
+    setup.bat
+    ```
+    Este script instalará las dependencias de `requirements.txt` y también instalará el proyecto en modo editable (usando `setup.py`). Asume que tienes un entorno virtual ya creado y activado, o que deseas instalarlo globalmente (no recomendado para desarrollo). Para una gestión de entorno virtual más explícita en Windows antes de correr `setup.bat`:
+    ```bash
+    python -m venv .venv
+    .venv\Scripts\activate
+    setup.bat
+    ```
+    *(Nota: `python` podría ser `python3` dependiendo de tu instalación).*
+
+
+**Opción 2: Configuración Manual**
+
+Si prefieres configurar el entorno manualmente:
+
+1.  **Crea un entorno virtual:**
+    Desde la raíz del proyecto:
+    ```bash
+    python -m venv .venv
+    ```
+    *(Usa `python3` si es necesario en tu sistema).*
+
+2.  **Activa el entorno virtual:**
+    *   MacOS y Linux:
+        ```bash
+        source .venv/bin/activate
+        ```
+    *   Windows (CMD):
+        ```bash
+        .venv\Scripts\activate.bat
+        ```
+    *   Windows (PowerShell):
+        ```bash
+        .venv\Scripts\Activate.ps1
+        ```
+        *(Si la ejecución de scripts está deshabilitada en PowerShell, puede que necesites ejecutar `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process` primero).*
+
+3.  **Instala las dependencias:**
+    Una vez activado el entorno virtual, instala las dependencias desde `requirements.txt`:
+    ```bash
+    pip install -r requirements.txt
+    ```
+    Opcionalmente, si quieres instalar el proyecto de forma editable (útil para desarrollo del propio paquete):
+    ```bash
+    pip install -e .
+    ```
+    Las dependencias principales incluyen `langgraph`, `langchain`, `langchain_core`, `langchain-openai`, `python-dotenv`, y `pydantic`.
+
+    Para la visualización del grafo (opcional, y puede requerir Graphviz instalado en el sistema):
+    ```bash
+    # pip install pygraphviz
+    ```
 
 ### Configuración de la API Key de OpenAI
 **Este paso es crucial para que funcionen las características de Inteligencia Artificial.**
@@ -200,3 +260,15 @@ Consultar el plan activo del agente IA para los detalles. La evolución se centr
 -   Conectar con APIs reales de redes sociales y marketplaces (considerando políticas de acceso y privacidad).
 -   Añadir persistencia para el estado del agente o los perfiles de usuario.
 -   Optimizar el flujo del grafo para evitar la re-ejecución innecesaria de nodos.
+
+### Expansión de la Visión y Aplicaciones Futuras
+Además de las mejoras incrementales, se contempla expandir las capacidades del agente para incluir:
+-   **Estrategias de Fidelización de Clientes**: Implementar mecánicas para fomentar la lealtad del cliente, como sistemas de puntos, recompensas por compras recurrentes, o recomendaciones personalizadas basadas en el historial a largo plazo.
+-   **Mecanismos Avanzados para Impulsar Compras**:
+    -   **Bundling Dinámico**: Sugerir paquetes de productos complementarios basados en el análisis de la wishlist y el comportamiento de compra.
+    -   **Ofertas Personalizadas y Tiempo Limitado**: Generar y presentar ofertas únicas para el usuario, posiblemente integradas con alertas.
+    -   **Comparación Inteligente**: Ayudar al usuario a comparar productos similares dentro del catálogo o incluso entre diferentes fuentes (si se expande el alcance).
+-   **Programas de Monedero Digital (Wallet Prepaga)**:
+    -   **Sistema de Prepago con Beneficios de Lealtad**: Permitir a los usuarios cargar fondos en un monedero digital y obtener beneficios adicionales (descuentos, acceso temprano a ofertas, etc.) por usarlo.
+    -   **Gestión de "Float" de Clientes**: Implementar un sistema donde los fondos prepagados por los clientes puedan ser gestionados eficientemente, incentivando su uso dentro del ecosistema del marketplace.
+    -   **Integración con Promociones**: Facilitar el uso del saldo del monedero para promociones especiales o cashback.
